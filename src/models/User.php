@@ -2,103 +2,171 @@
 
 namespace app\models;
 
-class User extends \yii\base\BaseObject implements \yii\web\IdentityInterface
+use Yii;
+use yii\base\Exception;
+use yii\behaviors\TimestampBehavior;
+use yii\db\ActiveRecord;
+use yii\web\IdentityInterface;
+
+/**
+ * Class User
+ *
+ * @property int $id
+ * @property string $username
+ * @property string $full_name
+ * @property string $password_hash
+ * @property string|null $auth_key
+ * @property string $role
+ * @property string|null $access_token
+ */
+class User extends ActiveRecord implements IdentityInterface
 {
-    public $id;
-    public $username;
-    public $password;
-    public $authKey;
-    public $accessToken;
-
-    private static $users = [
-        '100' => [
-            'id' => '100',
-            'username' => 'admin',
-            'password' => 'admin',
-            'authKey' => 'test100key',
-            'accessToken' => '100-token',
-        ],
-        '101' => [
-            'id' => '101',
-            'username' => 'demo',
-            'password' => 'demo',
-            'authKey' => 'test101key',
-            'accessToken' => '101-token',
-        ],
-    ];
-
+    const ROLE_USER = 'USER';
+    const ROLE_ADMIN = 'ADMIN';
 
     /**
      * {@inheritdoc}
      */
-    public static function findIdentity($id)
+    public static function tableName(): string
     {
-        return isset(self::$users[$id]) ? new static(self::$users[$id]) : null;
+        return 'user';
     }
 
     /**
      * {@inheritdoc}
      */
-    public static function findIdentityByAccessToken($token, $type = null)
+    public function behaviors(): array
     {
-        foreach (self::$users as $user) {
-            if ($user['accessToken'] === $token) {
-                return new static($user);
-            }
+        return [
+            TimestampBehavior::class,
+        ];
+    }
+
+    /**
+     * @param $insert
+     * @return bool
+     * @throws Exception
+     */
+    public function beforeSave($insert): bool
+    {
+        if ($insert) {
+            $this->auth_key = Yii::$app->security->generateRandomString();
+            $this->access_token = Yii::$app->security->generateRandomString(64);
         }
 
-        return null;
+        return parent::beforeSave($insert);
     }
 
     /**
-     * Finds user by username
-     *
+     * {@inheritdoc}
+     */
+    public function attributeLabels(): array
+    {
+        return [
+            'username' => 'Username',
+            'full_name' => 'Full Name',
+            'password' => 'Password',
+            'role' => 'Role',
+            'created_at' => 'Created At',
+            'updated_at' => 'Updated At',
+        ];
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function rules(): array
+    {
+        return [
+            [['username', 'role'], 'required'],
+            [['username', 'full_name'], 'string', 'min' => 3, 'max' => 255],
+            [['username'], 'unique'],
+
+            [['role'], 'in', 'range' => [self::ROLE_USER, self::ROLE_ADMIN]],
+
+            [['password'], 'safe'],
+
+            [['auth_key', 'access_token'], 'string', 'max' => 32],
+        ];
+    }
+
+    /**
+     * @param $id
+     * @return IdentityInterface|null
+     */
+    public static function findIdentity($id): ?IdentityInterface
+    {
+        return static::findOne($id);
+    }
+
+    /**
+     * @param $token
+     * @param $type
+     * @return IdentityInterface|null
+     */
+    public static function findIdentityByAccessToken($token, $type = null): ?IdentityInterface
+    {
+        return static::findOne(['access_token' => $token]);
+    }
+
+    /**
      * @param string $username
      * @return static|null
      */
-    public static function findByUsername($username)
+    public static function findByUsername(string $username): ?self
     {
-        foreach (self::$users as $user) {
-            if (strcasecmp($user['username'], $username) === 0) {
-                return new static($user);
-            }
-        }
-
-        return null;
+        return static::findOne(['username' => $username]);
     }
 
     /**
-     * {@inheritdoc}
+     * @return int|null
      */
-    public function getId()
+    public function getId(): ?int
     {
         return $this->id;
     }
 
     /**
-     * {@inheritdoc}
+     * @return string
      */
-    public function getAuthKey()
+    public function getAuthKey(): string
     {
-        return $this->authKey;
+        return $this->auth_key;
     }
 
     /**
-     * {@inheritdoc}
+     * @param $authKey
+     * @return bool
      */
-    public function validateAuthKey($authKey)
+    public function validateAuthKey($authKey): bool
     {
-        return $this->authKey === $authKey;
+        return $this->getAuthKey() === $authKey;
     }
 
     /**
-     * Validates password
-     *
-     * @param string $password password to validate
-     * @return bool if password provided is valid for current user
+     * @param string $password
+     * @return bool
      */
-    public function validatePassword($password)
+    public function validatePassword(string $password): bool
     {
-        return $this->password === $password;
+        return Yii::$app->security->validatePassword($password, $this->password_hash);
+    }
+
+    /**
+     * @return bool
+     */
+    public function isAdmin(): bool
+    {
+        return $this->role === self::ROLE_ADMIN;
+    }
+
+    /**
+     * @param string $password
+     * @return void
+     * @throws Exception
+     */
+    public function setPassword(string $password): void
+    {
+        $this->password_hash = Yii::$app->security->generatePasswordHash($password);
     }
 }
